@@ -1,0 +1,39 @@
+services:
+  pulsar:
+    image: apachepulsar/pulsar:4.1.0
+    command: >
+      bin/pulsar standalone
+      --advertised-address ${PULSAR_ADVERTISED_ADDRESS:-pulsar}
+    ports:
+      - "6650:6650"
+      - "8080:8080"
+    volumes:
+      - pulsar-data:/pulsar/data
+      - pulsar-conf:/pulsar/conf
+
+  server:
+    build: .
+    command: python -m prototype.server
+    environment:
+      PULSAR_URL: ${PULSAR_URL:-pulsar://pulsar:6650}
+      REQUEST_TOPIC: ${REQUEST_TOPIC:-persistent://public/default/prototype-requests}
+      SERVER_FILE_DIR: /data
+    volumes:
+      - ./server_data:/data
+    profiles:
+      - server
+
+  client:
+    build: .
+    command: python -m prototype.client
+    environment:
+      PULSAR_URL: ${PULSAR_URL:-pulsar://pulsar:6650}
+      REQUEST_TOPIC: ${REQUEST_TOPIC:-persistent://public/default/prototype-requests}
+    profiles:
+      - client
+    stdin_open: true
+    tty: true
+
+volumes:
+  pulsar-data:
+  pulsar-conf:

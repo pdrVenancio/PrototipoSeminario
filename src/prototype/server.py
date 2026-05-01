@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import os
+import signal
+from pathlib import Path
+
+import pulsar
+
+from prototype.operations import execute_operation
+from prototype.protocol import Request, Response
+
+
+PULSAR_URL = os.getenv("PULSAR_URL", "pulsar://localhost:6650")
+REQUEST_TOPIC = os.getenv("REQUEST_TOPIC", "persistent://public/default/prototype-requests")
+SERVER_FILE_DIR = Path(os.getenv("SERVER_FILE_DIR", "server_data"))
+
+
+def main() -> None:
+    stop = False
+
+    def handle_signal(signum: int, _frame: object) -> None:
+        nonlocal stop
+        print(f"Encerrando servidor. Sinal recebido: {signum}", flush=True)
+        stop = True
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    SERVER_FILE_DIR.mkdir(parents=True, exist_ok=True)
+    client = pulsar.Client(PULSAR_URL)
+    consumer = client.subscribe(
+        REQUEST_TOPIC,
+        subscription_name="prototype-server",
+        consumer_type=pulsar.ConsumerType.Shared,
+    )
+    producers: dict[str, pulsar.Producer] = {}
+
+    print(f"Servidor conectado em {PULSAR_URL}", flush=True)
+    print(f"Aguardando solicitacoes no topico {REQUEST_TOPIC}", flush=True)
+
+    try:
+        while not stop:
+            try:
+                msg = consumer.receive(timeout_millis=1000)
+            except pulsar.Timeout:
+                continue
+
+            try:
+                request = Request.from_bytes(msg.data())
+                print(
+                    f"Recebido {request.operation} id={request.request_id} "
+                    f"reply_to={request.reply_to}",
+                    flush=True,
+                )
+                result = execute_operation(request.operation, request.payload, SERVER_FILE_DIR)
+                response = Response(request_id=request.request_id, ok=True, result=result)
+            except Exception as exc:
+                request_id = "desconhecido"
+                reply_to = None
+                try:
+                    parsed = Request.from_bytes(msg.data())
+                    request_id = parsed.request_id
+                    reply_to = parsed.reply_to
+                except Exception:
+                    pass
+                response = Response(request_id=request_id, ok=False, error=str(exc))
+                if reply_to is None:
+                    print(f"Mensagem invalida sem topico de resposta: {exc}", flush=True)
+                    consumer.acknowledge(msg)
+                    continue
+            else:
+                reply_to = request.reply_to
+
+            producer = producers.get(reply_to)
+            if producer is None:
+                producer = client.create_producer(reply_to)
+                producers[reply_to] = producer
+            producer.send(response.to_bytes())
+            consumer.acknowledge(msg)
+    finally:
+        for producer in producers.values():
+            producer.close()
+        consumer.close()
+        client.close()
+
+
+if __name__ == "__main__":
+    main()
