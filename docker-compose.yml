@@ -1,11 +1,15 @@
 services:
+  # Broker Apache Pulsar em modo standalone: middleware entre cliente e servidor.
   pulsar:
     image: apachepulsar/pulsar:4.1.0
+    # Endereço anunciado para que containers ou maquinas externas encontrem o broker.
     command: >
       bin/pulsar standalone
       --advertised-address ${PULSAR_ADVERTISED_ADDRESS:-pulsar}
     ports:
+      # Porta usada pelos clientes/produtores/consumidores Pulsar.
       - "6650:6650"
+      # Porta HTTP de administracao do Pulsar.
       - "8080:8080"
     volumes:
       - pulsar-data:/pulsar/data
@@ -15,7 +19,9 @@ services:
     build: .
     command: python -m prototype.server
     environment:
+      # O servidor usa esta URL para se conectar ao broker Pulsar.
       PULSAR_URL: ${PULSAR_URL:-pulsar://pulsar:6650}
+      # Topico em que o servidor fica inscrito aguardando requisicoes.
       REQUEST_TOPIC: ${REQUEST_TOPIC:-persistent://public/default/prototype-requests}
       SERVER_FILE_DIR: /data
     volumes:
@@ -27,7 +33,9 @@ services:
     build: .
     command: python -m prototype.client
     environment:
+      # O cliente publica mensagens neste broker e depois escuta seu tópico de resposta.
       PULSAR_URL: ${PULSAR_URL:-pulsar://pulsar:6650}
+      # Mesmo tópico consumido pelo servidor.
       REQUEST_TOPIC: ${REQUEST_TOPIC:-persistent://public/default/prototype-requests}
     profiles:
       - client

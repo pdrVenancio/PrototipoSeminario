@@ -12,10 +12,12 @@ from prototype.protocol import Request, Response
 
 
 PULSAR_URL = os.getenv("PULSAR_URL", "pulsar://localhost:6650")
+# Tópico fixo usado como "fila de entrada" das requisições para o servidor.
 REQUEST_TOPIC = os.getenv("REQUEST_TOPIC", "persistent://public/default/prototype-requests")
 
 
 def main() -> None:
+    # Entrada principal do cliente: permite escolher a operação pela linha de comando.
     parser = argparse.ArgumentParser(description="Cliente do prototipo Python + Apache Pulsar.")
     parser.add_argument(
         "operation",
@@ -33,6 +35,7 @@ def main() -> None:
     parser.add_argument("--timeout", type=int, default=10)
     args = parser.parse_args()
 
+    # O cliente RPC abre a conexão, envia a requisição e aguarda a resposta do servidor.
     with PulsarRpcClient(PULSAR_URL, REQUEST_TOPIC, timeout_seconds=args.timeout) as rpc:
         if args.operation == "demo":
             responses = run_demo(rpc)
@@ -66,17 +69,24 @@ def main() -> None:
 
 class PulsarRpcClient:
     def __init__(self, pulsar_url: str, request_topic: str, timeout_seconds: int) -> None:
+        # URL do broker Apache Pulsar. Em uma demo distribuida, aponta para o IP da maquina do broker.
         self.pulsar_url = pulsar_url
+        # Tópico onde todos os clientes publicam pedidos para o servidor processar.
         self.request_topic = request_topic
         self.timeout_millis = timeout_seconds * 1000
+        # Cada execução do cliente cria um tópico Pulsar único para receber suas respostas.
+        # Isso permite que varios clientes usem o mesmo servidor sem misturar retornos.
         self.reply_topic = f"persistent://public/default/replies-{uuid.uuid4().hex}"
         self.client: pulsar.Client | None = None
         self.producer: pulsar.Producer | None = None
         self.consumer: pulsar.Consumer | None = None
 
     def __enter__(self) -> "PulsarRpcClient":
+        # Conecta no broker Pulsar, cria um produtor para requisições e um consumidor para respostas.
         self.client = pulsar.Client(self.pulsar_url)
+        # Producer: componente do Pulsar responsável por publicar mensagens em um tópico.
         self.producer = self.client.create_producer(self.request_topic)
+        # Consumer: componente do Pulsar responsável por ler mensagens de um tópico.
         self.consumer = self.client.subscribe(
             self.reply_topic,
             subscription_name=f"client-{uuid.uuid4().hex}",
@@ -97,6 +107,7 @@ class PulsarRpcClient:
         if self.producer is None or self.consumer is None:
             raise RuntimeError("Cliente Pulsar nao inicializado.")
 
+        # O request_id liga a requisição enviada com a resposta recebida depois.
         request_id = uuid.uuid4().hex
         request = Request(
             request_id=request_id,
@@ -104,12 +115,16 @@ class PulsarRpcClient:
             payload=payload,
             reply_to=self.reply_topic,
         )
+        # Publica a requisição no tópico principal consumido pelo servidor.
+        # A partition_key ajuda o Pulsar a manter a chave da mensagem associada ao request_id.
         self.producer.send(request.to_bytes(), partition_key=request_id)
 
         while True:
+            # O cliente bloqueia aguardando uma mensagem no seu tópico de resposta.
             msg = self.consumer.receive(timeout_millis=self.timeout_millis)
             try:
                 response = Response.from_bytes(msg.data())
+                # Ignora mensagens que não pertencem a esta chamada especifica.
                 if response.request_id != request_id:
                     self.consumer.acknowledge(msg)
                     continue
@@ -121,11 +136,13 @@ class PulsarRpcClient:
                     "error": response.error,
                 }
             except Exception:
+                # negative_acknowledge avisa ao Pulsar que a mensagem não foi processada corretamente.
                 self.consumer.negative_acknowledge(msg)
                 raise
 
 
 def run_demo(rpc: PulsarRpcClient) -> list[dict[str, Any]]:
+    # Demonstra as três operacoes principais.
     return [
         rpc.call("echo", {"text": "Mensagem enviada pelo cliente em outra maquina."}),
         rpc.call(

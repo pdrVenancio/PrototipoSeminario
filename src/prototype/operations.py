@@ -6,6 +6,7 @@ from typing import Any
 
 
 def execute_operation(operation: str, payload: dict[str, Any], file_dir: Path) -> Any:
+    # Ponto central que decide qual operação remota o servidor deve executar.
     if operation == "echo":
         return echo(payload)
     if operation == "write_file":
@@ -21,10 +22,12 @@ def echo(payload: dict[str, Any]) -> dict[str, str]:
 
 
 def write_file(payload: dict[str, Any], file_dir: Path) -> dict[str, Any]:
+    # Operação que altera um arquivo no servidor a partir de uma mensagem remota.
     filename = str(payload.get("filename", "server.txt")).strip() or "server.txt"
     content = str(payload.get("content", ""))
     mode = str(payload.get("mode", "append")).lower()
 
+    # Valida o caminho para evitar escrita fora da pasta controlada pelo servidor.
     path = _safe_text_path(file_dir, filename)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -47,6 +50,7 @@ def write_file(payload: dict[str, Any], file_dir: Path) -> dict[str, Any]:
 
 
 def calculate(payload: dict[str, Any]) -> dict[str, Any]:
+    # Operação de cálculo remoto: o cliente envia a função e os argumentos.
     function = str(payload.get("function", "add")).lower()
     args = payload.get("args", [])
     if not isinstance(args, list):
@@ -93,6 +97,7 @@ def calculate(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _safe_text_path(file_dir: Path, filename: str) -> Path:
+    # Proteção básica: aceita apenas arquivos .txt dentro do diretório do servidor.
     file_dir = file_dir.resolve()
     candidate = (file_dir / filename).resolve()
     if file_dir not in candidate.parents and candidate != file_dir:
@@ -105,6 +110,7 @@ def _safe_text_path(file_dir: Path, filename: str) -> Path:
 
 
 def _as_number(value: Any) -> int | float:
+    # Normaliza argumentos vindos do JSON para int ou float.
     if isinstance(value, bool):
         raise ValueError("Booleanos nao sao numeros validos para calculo.")
     if isinstance(value, (int, float)):
